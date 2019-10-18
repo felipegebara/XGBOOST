@@ -1,0 +1,364 @@
+
+
+
+Pular para o conteúdo
+Como usar o Gmail com leitores de tela
+in:sent 
+
+Conversas
+9,01 GB (60%) de 15 GB usados
+Gerenciar
+Termos · Privacidade · Regulamentos do programa
+Última atividade da conta: há 5 horas
+Detalhes
+
+#!/usr/bin/env python
+# coding: utf-8
+
+# In[650]:
+
+
+
+# Importanto as bases para carga e tratamento de tabelas
+
+import numpy as np
+import pandas as pd
+import seaborn as sns
+
+
+
+# In[651]:
+
+
+# Importando dados
+bdatrasos=pd.read_csv(r'C:\Base - Hackapan\BASE_ATRASOS_HACKAPAN.txt',sep=";",encoding='cp1252')
+bdtrans=pd.read_csv(r'C:\Base - Hackapan\BASE_TRANSACOES_HACKAPAN.txt',sep=";",encoding='cp1252')
+bdcartoes=pd.read_csv(r'C:\Base - Hackapan\BASE_CARTOES_HACKAPAN.txt',sep=";",encoding='cp1252')
+
+
+# In[652]:
+
+
+# Numeros basicos
+bdcartoes.groupby(['FLAG_DESENVOLVIMENTO', 'FRAUDE'])['FRAUDE'].count().unstack().fillna(0)
+
+
+
+# In[ ]:
+
+
+
+
+
+# In[653]:
+
+
+# Importa as bibliotecas minimas para rodar o XGboost
+
+import xgboost as xgb
+import sklearn
+from sklearn import metrics
+from functools import reduce
+
+
+# In[654]:
+
+
+
+#qtdade de meses sem atraso
+base1=bdatrasos[bdatrasos['QT_DIAS_ATRASO']==0].groupby('ID')['REFERENCIA'].count().to_frame('qtd_meses_sem_atraso').reset_index()
+#ultima data de entrada em atrao 
+base2=bdatrasos[bdatrasos['QT_DIAS_ATRASO']>6].groupby('ID')['REFERENCIA'].max().to_frame('max_data_Atraso>6').reset_index()
+#primeira data de atraso 
+base3=bdatrasos[bdatrasos['QT_DIAS_ATRASO']>6].groupby('ID')['REFERENCIA'].min().to_frame('min_data_Atraso>6').reset_index()
+#meses ema atraso 
+base4=bdatrasos[bdatrasos['QT_DIAS_ATRASO']>6].groupby('ID')['REFERENCIA'].count().to_frame('meses_atraso').reset_index()
+
+#rank mes
+bdatrasos.sort_values(['ID','REFERENCIA'])
+tmp = bdatrasos.groupby('ID').size()
+rank = tmp.map(range)
+rank =[item for sublist in rank for item in sublist]
+#1 mes= 1 
+bdatrasos['rank'] = rank
+
+
+#flag atraso_mes1
+base5=bdatrasos[bdatrasos['rank']==0].groupby('ID')['QT_DIAS_ATRASO'].max().to_frame('flg_atrsom1').reset_index()
+#flag atraso_mes2
+base6=bdatrasos[bdatrasos['rank']==1].groupby('ID')['QT_DIAS_ATRASO'].max().to_frame('flg_atrsom2').reset_index()
+
+#flag atraso_mes3
+base7=bdatrasos[bdatrasos['rank']==2].groupby('ID')['QT_DIAS_ATRASO'].max().to_frame('flg_atrsom3').reset_index()
+
+#junta as bases 
+result=reduce(lambda x,y: pd.merge(x,y,on=['ID'],how = 'left'), [base1,base2,base3,base4,base5,base6,base7])
+
+
+result.head()
+
+
+
+
+# In[ ]:
+
+
+
+bdtrans = pd.get_dummies(bdtrans, columns=['COMPRA_PRESENCIAL'], drop_first=True)
+bdtrans = pd.get_dummies(bdtrans, columns=['APROVADO_NEGADO'], drop_first=True)
+
+
+# In[ ]:
+
+
+#tratamento da base  transacional 
+bdtrans['date'] = pd.to_datetime(bdtrans['DATA_HORA'])
+#criacao da safra 
+bdtrans['safra']= bdtrans['date'].dt.year*100+ bdtrans['date'].dt.month
+bdtrans['day']= bdtrans['date'].dt.day
+bdtrans['hour']= bdtrans['date'].dt.hour
+
+
+bdtrans["VALOR_TRANSACAO"] = pd.to_numeric(bdtrans.VALOR_TRANSACAO, errors='coerce')
+bdtrans["group_rank"] = bdtrans.groupby("ID")["safra"].rank(ascending=0,method='min')
+
+
+
+#soma valor transacao 
+b1=bdtrans[bdtrans['group_rank']==1].groupby('ID')['VALOR_TRANSACAO'].sum().to_frame('vlr_transa_m0').reset_index()
+bdtrans['sum_val_transa'] = bdtrans.groupby(['ID','safra'])['VALOR_TRANSACAO'].transform(sum)
+transac_soma=bdtrans[['ID', 'safra', 'sum_val_transa','group_rank']]
+transac_soma.drop_duplicates(inplace=True) 
+bs=transac_soma[transac_soma['group_rank'].isin([2,3,4])].groupby('ID')['sum_val_transa'].mean().to_frame('vlr_transa_media').reset_index()
+
+#quantidade de transacao
+b2=bdtrans[bdtrans['group_rank']==1].groupby('ID')['VALOR_TRANSACAO'].count().to_frame('qtd_transacao_m0').reset_index()
+bdtrans['qtd_transa'] = bdtrans.groupby(['ID','safra'])['ID'].transform('count')
+transac_qtd=bdtrans[['ID', 'safra', 'qtd_transa','group_rank']]
+transac_qtd.drop_duplicates(inplace=True)
+bqtd=transac_qtd[transac_qtd['group_rank'].isin([2,3,4])].groupby('ID')['qtd_transa'].sum().to_frame('qtd_transacao_mes').reset_index()
+
+
+#sum_compra_presencial
+b3=bdtrans[bdtrans['group_rank']==1].groupby('ID')['COMPRA_PRESENCIAL_PRES'].sum().to_frame('qtd_pres_m0').reset_index()
+bdtrans['sum_COMPRA_PRESENCIAL_PRES'] = bdtrans.groupby(['ID','safra'])['COMPRA_PRESENCIAL_PRES'].transform(sum)
+transac_soma=bdtrans[['ID', 'safra', 'sum_COMPRA_PRESENCIAL_PRES','group_rank']]
+transac_soma.drop_duplicates(inplace=True) 
+bpre=transac_soma[transac_soma['group_rank'].isin([2,3,4])].groupby('ID')['sum_COMPRA_PRESENCIAL_PRES'].sum().to_frame('sum_qtd_pres_m0').reset_index()
+
+#qtdade de ramos diferentes
+b4=bdtrans[bdtrans['group_rank']==1].groupby('ID')['RAMO_LOJISTA'].nunique().to_frame('qtd_transacao_loja_m0').reset_index()
+bdtrans['qtd_transacao_l'] = bdtrans.groupby(['ID','safra'])['RAMO_LOJISTA'].transform('nunique')
+transac_qtd=bdtrans[['ID', 'safra', 'qtd_transacao_l','group_rank']]
+transac_qtd.drop_duplicates(inplace=True)
+bqest=transac_qtd[transac_qtd['group_rank'].isin([2,3,4])].groupby('ID')['qtd_transacao_l'].sum().to_frame('qtd_transacao_loja').reset_index()
+
+#qtdade de transacoes_negadas
+b5=bdtrans[bdtrans['group_rank']==1].groupby('ID')['APROVADO_NEGADO_NEG'].sum().to_frame('qtd_neg_m0').reset_index()
+bdtrans['sum_APROVADO_NEGADO_NEG'] = bdtrans.groupby(['ID','safra'])['APROVADO_NEGADO_NEG'].transform(sum)
+transac_soma=bdtrans[['ID', 'safra', 'sum_APROVADO_NEGADO_NEG','group_rank']]
+transac_soma.drop_duplicates(inplace=True) 
+btrans=transac_soma[transac_soma['group_rank'].isin([2,3,4])].groupby('ID')['sum_APROVADO_NEGADO_NEG'].mean().to_frame('sum_qtd_neg').reset_index()
+
+#maximo valor
+bdtrans['max_VALOR_TRANSACAO'] = bdtrans.groupby(['ID'])['VALOR_TRANSACAO'].transform(max)
+b7=bdtrans[['ID' ,'max_VALOR_TRANSACAO']]
+b7.drop_duplicates(inplace=True) 
+
+#utilization
+b8=bdtrans[bdtrans['group_rank']==1].groupby('ID')['LIMITE_DISPONIVEL_APOS_TRANSACAO'].min().to_frame('utilization').reset_index()
+butil=bdtrans[bdtrans['group_rank'].isin([2,3,4])].groupby('ID')['LIMITE_DISPONIVEL_APOS_TRANSACAO'].min().to_frame('min_utilization').reset_index()
+
+#horas diferentes
+b9=bdtrans[bdtrans['group_rank']==1].groupby('ID')['hour'].nunique().to_frame('qtd_transacao_horas_m0').reset_index()
+bdtrans['qtd_transacao_horas_'] = bdtrans.groupby(['ID','safra'])['hour'].transform('nunique')
+transac_qtd=bdtrans[['ID', 'safra', 'qtd_transacao_l','group_rank']]
+transac_qtd.drop_duplicates(inplace=True)
+
+
+
+#dias diferentes
+b10=bdtrans[bdtrans['group_rank']==1].groupby('ID')['day'].nunique().to_frame('qtd_transacao_day_m0').reset_index()
+bdtrans['qtd_transacao_day_m'] = bdtrans.groupby(['ID','safra'])['day'].transform('nunique')
+transac_qtd=bdtrans[['ID', 'safra', 'qtd_transacao_day_m','group_rank']]
+transac_qtd.drop_duplicates(inplace=True)
+bday=transac_qtd[transac_qtd['group_rank'].isin([2,3,4])].groupby('ID')['qtd_transacao_day_m'].mean().to_frame('qtd_transacao_day_mes').reset_index()
+
+
+
+
+
+
+trasacional=reduce(lambda x,y: pd.merge(x,y,on=['ID'],how = 'left'), [bs,b1,b2,bqtd,b3,bpre,b4,bqest,b5,btrans,b7,b8,butil,b9,b10,bday])
+trasacional['val_dis']=trasacional['vlr_transa_m0']/trasacional['vlr_transa_media']
+trasacional['qtd_dis']=trasacional['qtd_transacao_m0']/trasacional['qtd_transacao_mes']
+trasacional['perc_pre_m0']=trasacional['qtd_pres_m0']/trasacional['qtd_transacao_m0']
+trasacional['perc_pre_his']=trasacional['sum_qtd_pres_m0']/trasacional['qtd_transacao_mes']
+
+trasacional['tende_neg']=trasacional['qtd_neg_m0']/trasacional['sum_qtd_neg']
+trasacional['tende_loj']=trasacional['qtd_transacao_loja_m0']/trasacional['qtd_transacao_loja']
+trasacional['loj_tran']=trasacional['qtd_transacao_loja_m0']/trasacional['qtd_transacao_m0']
+
+
+trasacional['max_valtran_mo']=trasacional['max_VALOR_TRANSACAO']/trasacional['vlr_transa_m0']
+trasacional['max_valtran_med']=trasacional['max_VALOR_TRANSACAO']/trasacional['vlr_transa_media']
+
+
+trasacional.head()
+
+
+# In[ ]:
+
+
+# prepara uma base de teste
+
+
+
+bdcartoes = pd.get_dummies(bdcartoes, columns=['ORIGEM_VENDA_CONTRATO'], drop_first=True)
+bdcartoes = pd.get_dummies(bdcartoes, columns=['GENERO'], drop_first=True)
+bdcartoes = pd.get_dummies(bdcartoes, columns=['OPTIN_FATURA_POR_EMAIL'], drop_first=True)
+bdcartoes = pd.get_dummies(bdcartoes, columns=['FLAG_VALIDACAO_CADASTRAL'], drop_first=True)
+bdcartoes = pd.get_dummies(bdcartoes, columns=['ESTADO_CIVIL'], drop_first=True)
+bdcartoes = pd.get_dummies(bdcartoes, columns=['DDD_CELULAR'], drop_first=True)
+
+bdcartoes["RENDA_BUREAU1"] = pd.to_numeric(bdcartoes.RENDA_BUREAU1, errors='coerce')
+bdcartoes["RENDA_INFORMADA"] = pd.to_numeric(bdcartoes.RENDA_INFORMADA, errors='coerce')
+
+bdcartoes['DT_CONT'] = pd.to_datetime(bdcartoes['DT_CONTRATACAO'])
+bdcartoes['DATA_NASCIMENT'] = pd.to_datetime(bdcartoes['DATA_NASCIMENTO_CLIENTE'])
+bdcartoes['DATA_ATIV'] = pd.to_datetime(bdcartoes['DATA_ATIVACAO'])
+
+bdcartoes['ativ']=bdcartoes['DATA_ATIV'].sub(bdcartoes['DT_CONT'], axis=0)
+
+bdcartoes['ativ'] = bdcartoes[['ativ']].apply(pd.to_numeric)  
+
+
+
+bdcartoes['idade']=bdcartoes['DT_CONT'].dt.year-bdcartoes['DATA_NASCIMENT'].dt.year
+
+bdcartoes['var_renda_b1']=bdcartoes['RENDA_INFORMADA']/bdcartoes['RENDA_BUREAU1']
+bdcartoes['var_renda_b2']=bdcartoes['RENDA_INFORMADA']/bdcartoes['RENDA_BUREAU2']
+
+
+
+bdcartoes['valid_bureu']=(bdcartoes['CEP_RESIDENCIAL_INFORMADO'] == bdcartoes['CEP1_BUREAU1'] )
+bdcartoes = pd.get_dummies(bdcartoes, columns=['valid_bureu'], drop_first=True)
+
+bdcartoes['valid_bureu2']=(bdcartoes['CEP_RESIDENCIAL_INFORMADO'] == bdcartoes['CEP1_BUREAU2'] )
+bdcartoes = pd.get_dummies(bdcartoes, columns=['valid_bureu2'], drop_first=True)
+
+
+bdcartoes['valid_bureucidade']=(bdcartoes['CIDADE_RESIDENCIAL_INFORMADO'] == bdcartoes['CIDADE1_BUREAU1'] )
+bdcartoes = pd.get_dummies(bdcartoes, columns=['valid_bureucidade'], drop_first=True)
+
+
+
+
+# In[ ]:
+
+
+
+base_selecao=reduce(lambda x,y: pd.merge(x,y,on=['ID'],how = 'left'), [bdcartoes,result,trasacional])
+
+
+base_selecao['min_data_Atraso'] = pd.to_datetime(base_selecao['min_data_Atraso>6'])
+base_selecao['max_data_Atraso'] = pd.to_datetime(base_selecao['max_data_Atraso>6'])
+base_selecao['cont_day']=base_selecao['DT_CONT'].dt.day
+base_selecao['month_day']=base_selecao['DT_CONT'].dt.month
+
+base_selecao['dias_Dede_1atraso']=base_selecao['min_data_Atraso'].sub(base_selecao['DATA_ATIV'], axis=0)
+base_selecao['dias_entr_atraso']=base_selecao['max_data_Atraso'].sub(base_selecao['min_data_Atraso'], axis=0)
+
+base_selecao['dias_Dede_1atraso'] = base_selecao[['dias_Dede_1atraso']].apply(pd.to_numeric)  
+base_selecao['dias_entr_atraso'] = base_selecao[['dias_entr_atraso']].apply(pd.to_numeric)  
+
+base_selecao['diff_scores']=base_selecao['SCORE_CREDITO_BUREAU1']-base_selecao['SCORE_CREDITO_BUREAU2']
+base_selecao['delta_scores']=base_selecao['SCORE_CREDITO_BUREAU1']/base_selecao['SCORE_CREDITO_BUREAU2']
+base_selecao['util']=base_selecao['utilization']/base_selecao['LIMITE_CREDITO_CARTAO']
+
+base_selecao['varutil']=base_selecao['utilization']/base_selecao['min_utilization']
+
+
+base_selecao['cres_atrs_3m']=base_selecao['flg_atrsom3']/base_selecao['flg_atrsom1']
+
+db_reduzido = base_selecao[['FLAG_DESENVOLVIMENTO','FLAG_CARTAO_ADICIONAL','ORIGEM_VENDA_CONTRATO_OUTBOUND','OPTIN_FATURA_POR_EMAIL_S',
+                         'ESTADO_CIVIL_NAO_INFORMOU','DDD_CELULAR_31.0','RENDA_BUREAU1','RENDA_INFORMADA','idade','ativ',
+                         'var_renda_b1','var_renda_b2','qtd_meses_sem_atraso','dias_entr_atraso','loj_tran','varutil','min_utilization',
+                         'meses_atraso','flg_atrsom1','flg_atrsom2','flg_atrsom3','dias_Dede_1atraso','valid_bureu2_True',
+                         'max_valtran_med','delta_scores','diff_scores','cres_atrs_3m','valid_bureu_True','utilization',
+                         'vlr_transa_media','vlr_transa_m0','qtd_transacao_m0','qtd_transacao_mes','val_dis','qtd_dis','month_day','cont_day',
+                         'qtd_pres_m0','sum_qtd_pres_m0','perc_pre_m0','perc_pre_his','tende_loj','util',
+                          'valid_bureucidade_True', 'qtd_transacao_loja_m0','qtd_transacao_loja','qtd_neg_m0','sum_qtd_neg','tende_neg','max_valtran_mo',
+                         'GENERO_MASCULINO','FLAG_EMAIL_INFORMADO','FRAUDE','LIMITE_CREDITO_CARTAO','SCORE_FRAUDE','FLAG_VALIDACAO_CADASTRAL_S',
+                         'SCORE_CREDITO_BUREAU1','SCORE_CREDITO_BUREAU2','RENDA_BUREAU2',
+                            
+                            'qtd_transacao_day_m0','qtd_transacao_day_mes',
+                           'qtd_transacao_horas_m0'
+                           
+                           
+                           
+                           ]]
+
+
+
+
+# Separa desenvolvimento e validacao
+db_dsnv = db_reduzido[(db_reduzido['FLAG_DESENVOLVIMENTO'] == 1)]
+db_vl   = db_reduzido[(db_reduzido['FLAG_DESENVOLVIMENTO'] == 0)]
+
+# O desenvolvimento converto em Array
+aux1 = db_dsnv.drop('FRAUDE', axis = 1)
+train_X = aux1.values
+aux2 = db_dsnv['FRAUDE']
+train_y = aux2.values
+
+# A de teste converto em matrix
+aux3 = db_vl.drop('FRAUDE', axis = 1)
+test_X = aux3.values
+aux4 = db_vl['FRAUDE']
+y_true = aux4.values
+
+
+
+# In[ ]:
+
+
+# Treina o modelo
+gbm = xgb.XGBClassifier(max_depth=6 ,n_estimators=300,subsample = 0.6, learning_rate=0.05).fit(train_X, train_y)
+
+
+# In[ ]:
+
+
+# Marca a preditora
+y_pred = gbm.predict(test_X)
+
+
+# In[ ]:
+
+
+acuracia = metrics.accuracy_score(y_true, y_pred)
+confusao = metrics.confusion_matrix(y_true, y_pred)
+
+
+# In[ ]:
+
+
+# Teste do Modelo
+print('Resumo de Eficienia do Modelo' + '\n\n' + 
+      'Acuracia do Modelo: ' + str(acuracia) + '\n\n' 
+      'Matrix de Confusao ' + '\n' +
+       str(confusao))
+
+
+# In[641]:
+
+
+Resumo de Eficienia do Modelo
+
+Acuracia do Modelo: 0.9962644895444218
+
+Matrix de Confusao 
+[[25782     9]
+ [   88    88]]
+
