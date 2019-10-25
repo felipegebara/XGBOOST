@@ -1,24 +1,5 @@
 
 
-
-Pular para o conteúdo
-Como usar o Gmail com leitores de tela
-in:sent 
-
-Conversas
-9,01 GB (60%) de 15 GB usados
-Gerenciar
-Termos · Privacidade · Regulamentos do programa
-Última atividade da conta: há 5 horas
-Detalhes
-
-#!/usr/bin/env python
-# coding: utf-8
-
-# In[650]:
-
-
-
 # Importanto as bases para carga e tratamento de tabelas
 
 import numpy as np
